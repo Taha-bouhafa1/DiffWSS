@@ -2,150 +2,177 @@
 
 ### Diffusion-Guided Weakly Supervised Semantic Segmentation of High-Resolution Aerial Images
 
-DiffWSS is a research project investigating the integration of diffusion models into weakly supervised semantic segmentation (WSSS) for high-resolution aerial imagery.
+DiffWSS is a research project investigating the application of diffusion-guided representations to Weakly Supervised Semantic Segmentation (WSSS) of high-resolution aerial imagery.
 
-Inspired by **DiG (ECCV 2024)**, the project explores how diffusion-based visual representations and image reconstruction can improve semantic localization and segmentation using image-level supervision.
+The project adapts the methodology introduced in **Diffusion-Guided Weakly Supervised Semantic Segmentation (DiG, ECCV 2024)** to the ISPRS Potsdam dataset.
 
-The framework is adapted to the **ISPRS Potsdam dataset**, focusing on aerial scene understanding and land-cover classification.
+The main objective is to investigate whether diffusion models can improve semantic localization and pseudo-label generation when only image-level annotations are available, reducing the need for expensive pixel-level annotations.
+
+---
 
 ## Dataset
 
-The project uses the ISPRS Potsdam aerial image dataset.
+The project uses the **ISPRS Potsdam 2D Semantic Labeling Dataset**, which contains high-resolution aerial images with pixel-level annotations.
 
-| Property | Description |
-|---|---|
-| Dataset | ISPRS Potsdam |
-| Original image resolution | 6000 × 6000 |
-| Spatial resolution | 5 cm |
-| Number of scenes | 38 |
-| Tile size | 512 × 512 |
-| Tiling strategy | Non-overlapping |
-| Total number of tiles | 5,472 |
+### Dataset Characteristics
+
+- Number of scenes: 38
+- Original image resolution: 6000 × 6000 pixels
+- Spatial resolution: 5 cm
+- Number of semantic classes: 6
+- Image format: RGB TIFF
+- Annotation format: RGB TIFF masks
 
 ### Semantic Classes
 
-The dataset contains six semantic categories:
+| ID | Class | RGB Color |
+|---|---|---|
+| 0 | Impervious surfaces | (255, 255, 255) |
+| 1 | Building | (0, 0, 255) |
+| 2 | Low vegetation | (0, 255, 255) |
+| 3 | Tree | (0, 255, 0) |
+| 4 | Car | (255, 255, 0) |
+| 5 | Clutter / Background | (255, 0, 0) |
 
-1. Impervious surfaces
-2. Building
-3. Low vegetation
-4. Tree
-5. Car
-6. Clutter/background
+### Preprocessing
 
-### Dataset Splits
+The original 6000 × 6000 images are divided into non-overlapping 512 × 512 patches.
 
-| Split | Scenes | Tiles |
+- Patch size: 512 × 512
+- Stride: 512
+- Padding: Images are padded to 6144 × 6144.
+- Patches per scene: 144
+- Total patches: 5,472
+
+### Dataset Split
+
+The dataset is divided at the scene level to prevent spatial leakage between training, validation, and testing samples.
+
+| Split | Scenes | Patches |
 |---|---:|---:|
 | Training | 26 | 3,744 |
 | Validation | 6 | 864 |
 | Testing | 6 | 864 |
 | **Total** | **38** | **5,472** |
 
-The original scenes are divided into 512 × 512 tiles. Dataset splitting is performed at the scene level to prevent spatial leakage between training, validation, and testing sets.
+Image-level class labels are generated from the training annotations to simulate weak supervision.
 
-Image-level multi-label annotations are derived from the semantic masks to provide weak supervision. Pixel-level annotations are reserved for evaluation.
+Pixel-level annotations are reserved for validation and testing in the weakly supervised experiments.
+
+---
 
 ## Methodology
 
-The proposed framework follows a diffusion-guided weakly supervised segmentation approach inspired by DiG.
+The project adapts the Diffusion-Guided Weakly Supervised Semantic Segmentation (DiG) framework to high-resolution aerial imagery.
 
-### 1. Denoising Diffusion Probabilistic Model (DDPM)
+The methodology consists of two main stages.
 
-A domain-specific DDPM is trained on unlabeled Potsdam training images to learn the visual distribution of aerial imagery.
+### Stage 1: Diffusion Model Training
 
-The diffusion model uses a U-Net architecture and a velocity prediction objective.
+A Denoising Diffusion Probabilistic Model (DDPM) is trained on unlabeled Potsdam training images.
 
-Main components:
+The diffusion model learns visual representations of the target aerial imagery and provides intermediate features that can be used during the subsequent weakly supervised learning stage.
 
-- U-Net denoising architecture.
-- Sigmoid noise schedule.
-- 1,000 diffusion timesteps.
-- Velocity prediction objective (`pred_v`).
-- Adam optimizer.
-- Mixed-precision training.
-- Exponential Moving Average (EMA).
+**DDPM Configuration:**
 
-The trained diffusion model provides intermediate feature representations and reconstructed images for subsequent stages.
+- Architecture: U-Net
+- Diffusion timesteps: 1,000
+- Noise schedule: Sigmoid
+- Prediction objective: Velocity prediction (`pred_v`)
+- Optimizer: Adam
+- Learning rate: 1e-4
+- Mixed precision: FP16
+- EMA: Exponential Moving Average
 
-### 2. Diffusion-Guided Feature Learning
+### Stage 2: Diffusion-Guided Weakly Supervised Semantic Segmentation
 
-The framework incorporates two complementary components inspired by DiG:
+The second stage adapts the DiG methodology by combining Vision Transformer representations with diffusion-model features.
 
-**Learnable Feature Cross-Attention (LFCA)**
+It incorporates two important components:
 
-Integrates intermediate diffusion representations into Vision Transformer features through cross-attention, providing additional visual information for semantic localization and class activation map generation.
+**1. Locality Fusion Cross Attention (LFCA)**
 
-**Pairwise Affinity Consistency (PAC)**
+LFCA integrates semantic representations from the Vision Transformer with intermediate features extracted from the DDPM U-Net.
 
-Uses original and diffusion-reconstructed images to encourage consistency in learned visual representations and pairwise affinities, improving semantic localization.
+Through cross-attention, diffusion features provide complementary visual information that helps improve semantic localization and generate Diffusion-CAMs.
 
-The diffusion model is kept frozen during this stage.
+**2. Patch Affinity Consistency (PAC)**
 
-### 3. Weakly Supervised Semantic Segmentation
+PAC encourages consistency between representations extracted from the original input images and their diffusion-reconstructed counterparts.
 
-Image-level class annotations are used to generate class activation maps and derive pseudo-labels for semantic segmentation.
+By exploiting the relationship between patch-level representations and affinities, PAC helps improve the consistency of semantic localization.
 
-The resulting pseudo-labels provide supervision for training the final segmentation network.
+### Pseudo-Label Generation
+
+The localization maps are refined to generate pseudo-labels for semantic segmentation training.
+
+These pseudo-labels provide pixel-level supervision for the downstream segmentation model.
+
+### Semantic Segmentation
+
+DeepLabV3+ is used as the downstream semantic segmentation architecture to learn pixel-level predictions from the generated pseudo-labels.
+
+---
 
 ## Implementation
 
 The project is implemented using Python and PyTorch.
 
-**Technologies and libraries:**
+### Main Technologies
 
 - Python
 - PyTorch
-- Torchvision
-- NumPy
-- OpenCV
-- Hugging Face
+- Vision Transformers (ViT)
+- Denoising Diffusion Probabilistic Models (DDPM)
+- DeepLabV3+
+- ISPRS Potsdam Dataset
 
-**Training environment:**
+### Hardware
 
-- NVIDIA Tesla T4 GPUs
-- Kaggle GPU environment
-- Mixed-precision training (FP16)
+Diffusion model training is performed using GPU acceleration.
+
+---
 
 ## Repository Structure
 
 ```text
 DiffWSS/
 │
+├── configs/
+│
 ├── data/
 │   ├── raw/
 │   └── processed/
 │
-├── notebooks/
-│
-├── configs/
-│
-├── models/
-│   ├── ddpm/
-│   ├── vit/
-│   └── segmentation/
-│
-├── scripts/
-│
-├── checkpoints/
+├── docs/
 │
 ├── outputs/
 │
+├── scripts/
+│   ├── tiling.py
+│   └── weak_labels.py
+│
 ├── README.md
-└── requirements.txt
+└── .gitignore
 ```
-
-## Research Reference
-
-**Diffusion-Guided Weakly Supervised Semantic Segmentation (DiG)**
-
-ECCV 2024.
-
-- Official implementation: https://github.com/yoon307/DiG
-- Research paper: https://www.ecva.net/papers/eccv_2024/papers_ECCV/papers/06482.pdf
-
-DiffWSS investigates the adaptation of diffusion-guided weakly supervised semantic segmentation to high-resolution aerial imagery, using the ISPRS Potsdam dataset.
 
 ---
 
-**Project status:** Research and implementation in progress.
+## Research Reference
+
+This project is based on the following research:
+
+**Diffusion-Guided Weakly Supervised Semantic Segmentation**
+
+ECCV 2024.
+
+- Paper: https://www.ecva.net/papers/eccv_2024/papers_ECCV/papers/06482.pdf
+- Official implementation: https://github.com/yoon307/DiG
+
+The original framework is adapted to the ISPRS Potsdam dataset to investigate diffusion-guided weakly supervised semantic segmentation in high-resolution aerial imagery.
+
+---
+
+## Project Status
+
+Research and implementation in progress.
