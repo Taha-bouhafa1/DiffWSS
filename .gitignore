@@ -1,7 +1,31 @@
-data/raw/
-data/processed/
-outputs/
+# Raw Potsdam dataset
+/data/raw/
+
+# Generated dataset tiles
+/data/processed/train/
+/data/processed/val/
+/data/processed/test/
+
+# Model checkpoints and weights
+/checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Python cache
 __pycache__/
 *.py[cod]
+*.egg-info/
+
+# Virtual environments
+venv/
 .venv/
-.env
+env/
+
+# Jupyter temporary files
+.ipynb_checkpoints/
+
+# System files
+.DS_Store
+Thumbs.db
+potsdam_train_images.zip
