@@ -51,7 +51,6 @@ class GaussianDiffusion(nn.Module):
         min_snr_loss_weight=False,
         min_snr_gamma=5
     ):
-
         super().__init__()
 
         assert model.channels == model.out_dim
@@ -184,6 +183,10 @@ class GaussianDiffusion(nn.Module):
     def device(self):
         return self.betas.device
 
+    # --------------------------------------------------
+    # Forward diffusion: add noise
+    # --------------------------------------------------
+
     def q_sample(self, x_start, t, noise=None):
 
         if noise is None:
@@ -203,6 +206,10 @@ class GaussianDiffusion(nn.Module):
             ) * noise
         )
 
+    # --------------------------------------------------
+    # Velocity target
+    # --------------------------------------------------
+
     def predict_v(self, x_start, t, noise):
 
         return (
@@ -218,6 +225,50 @@ class GaussianDiffusion(nn.Module):
                 x_start.shape
             ) * x_start
         )
+
+    # --------------------------------------------------
+    # Reconstruct x0 from predicted velocity
+    # --------------------------------------------------
+
+    def predict_start_from_v(self, x_t, t, v):
+
+        return (
+            extract(
+                self.sqrt_alphas_cumprod,
+                t,
+                x_t.shape
+            ) * x_t
+
+            - extract(
+                self.sqrt_one_minus_alphas_cumprod,
+                t,
+                x_t.shape
+            ) * v
+        )
+
+    # --------------------------------------------------
+    # Reverse prediction: reconstruct x0 from noise
+    # --------------------------------------------------
+
+    def predict_start_from_noise(self, x_t, t, noise):
+
+        return (
+            extract(
+                self.sqrt_recip_alphas_cumprod,
+                t,
+                x_t.shape
+            ) * x_t
+
+            - extract(
+                self.sqrt_recipm1_alphas_cumprod,
+                t,
+                x_t.shape
+            ) * noise
+        )
+
+    # --------------------------------------------------
+    # Training loss
+    # --------------------------------------------------
 
     def p_losses(self, x_start, t, noise=None):
 
@@ -269,6 +320,10 @@ class GaussianDiffusion(nn.Module):
             return loss.mean()
 
         return x, model_out, feat_out
+
+    # --------------------------------------------------
+    # Main forward
+    # --------------------------------------------------
 
     def forward(self, img):
 
