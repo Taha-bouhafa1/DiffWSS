@@ -54,6 +54,29 @@ class ResidualBlock(nn.Module):
         return self.act2(out)
 
 
+class DropPath(nn.Module):
+
+    def __init__(self, drop_prob=0.0):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+
+        if self.drop_prob == 0.0 or not self.training:
+            return x
+
+        keep_prob = 1.0 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(
+            shape,
+            dtype=x.dtype,
+            device=x.device,
+        )
+        random_tensor.floor_()
+
+        return x.div(keep_prob) * random_tensor
+
+
 class LFCA(nn.Module):
 
     def __init__(
@@ -62,7 +85,8 @@ class LFCA(nn.Module):
         diffusion_dim=512,
         num_classes=6,
         num_heads=8,
-        drop_path=0.1
+        drop_path=0.1,
+        diffusion_feature_channels=None
     ):
         super().__init__()
 
@@ -84,25 +108,16 @@ class LFCA(nn.Module):
         self.head_dim = vit_dim // num_heads
         self.value_head_dim = diffusion_dim // num_heads
 
-        self.expected_channels = [256, 128, 64, 32, 32]
-
-        self.feature_projections = nn.ModuleList([
-            nn.Conv2d(256, diffusion_dim, kernel_size=1),
-            nn.Conv2d(128, diffusion_dim, kernel_size=1),
-            nn.Conv2d(64, diffusion_dim, kernel_size=1),
-            nn.Conv2d(32, diffusion_dim, kernel_size=1),
-            nn.Conv2d(32, diffusion_dim, kernel_size=1)
-        ])
-
-        self.diff_init = ResidualBlock(
-            diffusion_dim * 5,
-            diffusion_dim,
-            groups=1
+        self.feature_channels = (
+            diffusion_feature_channels
+            if diffusion_feature_channels is not None
+            else diffusion_dim * 5
         )
 
-        self.norm_q = nn.LayerNorm(
-            vit_dim,
-            eps=1e-6
+        self.diff_init = ResidualBlock(
+            self.feature_channels,
+            diffusion_dim,
+            groups=1
         )
 
         self.norm_k = nn.LayerNorm(
@@ -176,15 +191,41 @@ class LFCA(nn.Module):
             )
         )
 
-        self.drop_path = nn.Dropout(drop_path)
+        self.drop_path = DropPath(drop_path)
+
+        self.init_weight()
+        self._reset_parameters()
+
+    def init_weight(self):
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_normal_(
+                    module.weight,
+                    mode="fan_in",
+                    nonlinearity="relu",
+                )
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.Linear):
+                nn.init.trunc_normal_(module.weight, std=0.02)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(
+                module,
+                (nn.BatchNorm2d, nn.GroupNorm, nn.LayerNorm),
+            ):
+                nn.init.constant_(module.weight, 1.0)
+                nn.init.constant_(module.bias, 0)
+
+    def _reset_parameters(self):
+        nn.init.xavier_uniform_(self.key.weight)
+        nn.init.xavier_uniform_(self.value.weight)
+        nn.init.constant_(self.key.bias, 0)
+        nn.init.constant_(self.value.bias, 0)
+        nn.init.trunc_normal_(self.mlp_p1[0].weight, std=0.02)
+        nn.init.trunc_normal_(self.mlp_p1[2].weight, std=0.02)
 
     def forward(self, query_tokens, diffusion_features):
-
-        if len(diffusion_features) != 5:
-            raise ValueError(
-                f"LFCA expects 5 feature maps, "
-                f"received {len(diffusion_features)}"
-            )
 
         if query_tokens.ndim != 3:
             raise ValueError(
@@ -204,53 +245,25 @@ class LFCA(nn.Module):
                 "Query tokens must contain class and patch tokens"
             )
 
-        projected_features = []
-
-        for index, (feature, projection, expected_channels) in enumerate(
-            zip(
-                diffusion_features,
-                self.feature_projections,
-                self.expected_channels
-            )
-        ):
-
-            if feature.ndim != 4:
-                raise ValueError(
-                    f"Feature {index} must have shape [B,C,H,W]"
-                )
-
-            if feature.shape[0] != batch_size:
-                raise ValueError(
-                    f"Feature {index}: batch size mismatch"
-                )
-
-            if feature.shape[1] != expected_channels:
-                raise ValueError(
-                    f"Feature {index}: expected "
-                    f"{expected_channels} channels, "
-                    f"received {feature.shape[1]}"
-                )
-
-            projected_features.append(
-                projection(feature.detach())
+        if diffusion_features.ndim != 4:
+            raise ValueError(
+                "diffusion_features must have shape [B, C, H, W]"
             )
 
-        spatial_size = projected_features[0].shape[-2:]
+        if diffusion_features.shape[0] != batch_size:
+            raise ValueError(
+                "diffusion_features batch size mismatch"
+            )
 
-        for index, feature in enumerate(projected_features):
+        if diffusion_features.shape[1] != self.feature_channels:
+            raise ValueError(
+                f"Expected {self.feature_channels} diffusion channels, "
+                f"received {diffusion_features.shape[1]}"
+            )
 
-            if feature.shape[-2:] != spatial_size:
-                raise ValueError(
-                    f"Feature {index} has spatial size "
-                    f"{feature.shape[-2:]}, expected {spatial_size}"
-                )
+        spatial_size = diffusion_features.shape[-2:]
 
-        diffusion_features = torch.cat(
-            projected_features,
-            dim=1
-        )
-
-        kv = self.diff_init(diffusion_features)
+        kv = self.diff_init(diffusion_features.detach())
 
         num_patches = (
             query_tokens.shape[1] - self.num_classes
@@ -266,8 +279,8 @@ class LFCA(nn.Module):
 
         query_input = query_tokens
 
-        query = self.query(
-            self.norm_q(query_tokens)
+        query = self.norm_k(
+            self.query(query_tokens)
         )
 
         key = self.key(kv)
@@ -362,8 +375,10 @@ class LFCA(nn.Module):
         )
 
         output_patch = (
-            self.mlp_p1(
-                self.norm_p1(output_patch)
+            self.drop_path(
+                self.mlp_p1(
+                    self.norm_p1(output_patch)
+                )
             ) + output_patch
         )
 

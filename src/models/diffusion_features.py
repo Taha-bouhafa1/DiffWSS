@@ -84,10 +84,7 @@ class DiffusionFeatureExtractor(nn.Module):
         batch_size = images.shape[0]
         device = images.device
 
-        if noise is None:
-            noise = torch.randn_like(images)
-
-        if noise.shape != images.shape:
+        if noise is not None and noise.shape != images.shape:
             raise ValueError(
                 "Noise and images must have identical shapes"
             )
@@ -106,10 +103,12 @@ class DiffusionFeatureExtractor(nn.Module):
                 dtype=torch.long
             )
 
+            step_noise = torch.randn_like(images)
+
             noisy_images = self.diffusion.q_sample(
                 images,
                 t,
-                noise
+                step_noise
             )
 
             _, features = self._unet_output(noisy_images, t)
@@ -120,7 +119,18 @@ class DiffusionFeatureExtractor(nn.Module):
                 timestep_index
             )
 
-            all_features.append(features)
+            spatial_size = features[0].shape[-2:]
+
+            for feature in features[1:]:
+                if feature.shape[-2:] != spatial_size:
+                    raise RuntimeError(
+                        f"Timestep {timestep_index}: feature spatial "
+                        "size mismatch"
+                    )
+
+            all_features.append(
+                torch.cat(features, dim=1)
+            )
 
         denoised_image = None
 
@@ -132,10 +142,14 @@ class DiffusionFeatureExtractor(nn.Module):
                 dtype=torch.long
             )
 
+            pac_noise = (
+                noise if noise is not None else torch.randn_like(images)
+            )
+
             noisy_images = self.diffusion.q_sample(
                 images,
                 t,
-                noise
+                pac_noise
             )
 
             predicted_velocity, _ = self._unet_output(
@@ -149,9 +163,7 @@ class DiffusionFeatureExtractor(nn.Module):
                 predicted_velocity
             )
 
-            denoised_image = self.diffusion.unnormalize(
-                reconstructed
-            ).clamp(-1.0, 1.0)
+            denoised_image = self.diffusion.unnormalize(reconstructed)
 
         return {
             "features": all_features,

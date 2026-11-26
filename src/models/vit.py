@@ -368,8 +368,6 @@ class ViTBase16(nn.Module):
             q_list.append(q)
             k_list.append(k)
 
-        x = self.norm(x)
-
         x_cls = x[:, :self.num_classes]
         x_patch = x[:, self.num_classes:]
 
@@ -411,7 +409,7 @@ class ViTBase16(nn.Module):
             grid_w
         )
 
-        cls_logits = self.class_head(x_cls).squeeze(-1)
+        cls_logits = x_cls.mean(-1)
 
         cam_logits = self.cam_head(patch_features)
 
@@ -436,11 +434,11 @@ class ViTBase16(nn.Module):
         attention_weights = torch.stack(
             attention_weights,
             dim=0
-        )
+        ).mean(dim=2)
 
-        attention_mean = attention_weights.mean(dim=2).mean(dim=0)
-
-        class_attention = attention_mean[
+        class_attention = attention_weights[
+            -len(self.blocks):
+        ].sum(dim=0)[
             :,
             :self.num_classes,
             self.num_classes:
@@ -453,11 +451,15 @@ class ViTBase16(nn.Module):
             grid_w
         )
 
-        patch_attention = attention_mean[
-            :,
-            self.num_classes:,
-            self.num_classes:
-        ]
+        patch_attention = torch.sum(
+            attention_weights[
+                :,
+                :,
+                self.num_classes:,
+                self.num_classes:
+            ],
+            dim=0
+        )
 
         cams = F.relu(cam_logits) * mtatt
 

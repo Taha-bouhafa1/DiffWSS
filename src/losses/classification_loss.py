@@ -104,13 +104,9 @@ class DiGClassificationLoss(nn.Module):
             dim=1
         )
 
-        student_log_probs = torch.log(
-            student_probs.clamp_min(1e-8)
-        )
+        student_log_probs = torch.log(student_probs)
 
-        teacher_log_probs = torch.log(
-            teacher_probs.clamp_min(1e-8)
-        )
+        teacher_log_probs = torch.log(teacher_probs)
 
         kl = self.kl_loss(
             student_log_probs,

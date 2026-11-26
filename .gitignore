@@ -1,16 +1,24 @@
-# Raw Potsdam dataset
-/data/raw/
-
-# Generated dataset tiles
-/data/processed/train/
-/data/processed/val/
-/data/processed/test/
+# Dataset and heavy local data
+/data/
+/upload_phase2/
+/DiffWSS_Phase2/
+/DiffWSS_Phase2.zip
+*.zip
 
 # Model checkpoints and weights
 /checkpoints/
 *.pt
 *.pth
 *.ckpt
+
+# Generated outputs
+/visualizations/
+/loss_plots/
+/outputs/
+/history.json
+/history.csv
+/pseudo_labels/
+*.log
 
 # Python cache
 __pycache__/
